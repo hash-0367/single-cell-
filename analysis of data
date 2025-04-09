@@ -1,0 +1,177 @@
+# Install and load Seurat package
+install.packages("Seurat")
+library(Seurat)
+
+# Additional required libraries
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+
+# Load the Cell Ranger dataset
+seurat_data <- Read10X(data.dir = "C:\\GINNYs data\\CELLRANGER_ANALYSIS\\filtered_gene_bc_matrices - Copy\\filtered_gene_bc_matrices - Copy\\mm10")
+
+# Initialize the Seurat object with the raw (non-normalized) data
+seurat_object <- CreateSeuratObject(counts = seurat_data, project = "cell_ranger_analysis", min.cells = 3, min.features = 200)
+seurat_object
+
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+seurat_object[["percent.mt"]] <- PercentageFeatureSet(seurat_object, pattern = "^MT-")
+
+# Visualize QC metrics as a violin plot
+VlnPlot(seurat_object, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+# FeatureScatter is typically used to visualize feature-feature relationships
+plot1 <- FeatureScatter(seurat_object, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(seurat_object, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+
+# Normalization
+seurat_object <- NormalizeData(seurat_object, normalization.method = "LogNormalize", scale.factor = 10000)
+
+# Find variable features
+seurat_object <- FindVariableFeatures(seurat_object, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(seurat_object), 10)
+
+# Plot variable features with and without labels
+plot1 <- VariableFeaturePlot(seurat_object)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1 + plot2
+
+# Scale data
+all.genes <- rownames(seurat_object)
+seurat_object <- ScaleData(seurat_object, features = all.genes)
+
+# Run PCA for dimensionality reduction
+seurat_object <- RunPCA(seurat_object, features = VariableFeatures(object = seurat_object))
+
+# Examine and visualize PCA results
+print(seurat_object[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(seurat_object, dims = 1:2, reduction = "pca")
+DimPlot(seurat_object, reduction = "pca") + NoLegend()
+DimHeatmap(seurat_object, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(seurat_object, dims = 1:15, cells = 500, balanced = TRUE)
+
+# Elbow plot to determine the number of PCs to use for clustering
+ElbowPlot(seurat_object)
+
+# Find neighbors and clusters
+seurat_object <- FindNeighbors(seurat_object, dims = 1:10)
+seurat_object <- FindClusters(seurat_object, resolution = 0.5)
+
+# Look at cluster IDs of the first 5 cells
+head(Idents(seurat_object), 5)
+
+# Run UMAP for visualization
+seurat_object <- RunUMAP(seurat_object, dims = 1:10)
+DimPlot(seurat_object, reduction = "umap")
+
+# Define specific colors for each cell type
+cell_type_colors <- c(
+    "Mature oligodendrocytes" = "blue",
+    "Neurons (excitatory or sensory)" = "red",
+    "Uncharacterised (rare or novel cells)" = "gray",
+    "Fibroblast-like cells or specialised astrocytes" = "green",
+    "Reactive astrocytes" = "purple",
+    "GABAergic inhibitory neurons" = "yellow",
+    "Sensory neurons (chemosensory)" = "orange",
+    "Cycling cells (progenitors)" = "brown",
+    "Erythroid cells (red blood cells)" = "pink",
+    "Vascular-associated cells" = "cyan",
+    "Senescent or stress-responsive cells" = "darkred",
+    "Immune cells (microglia or macrophages)" = "#008080"  # Hex code for teal
+)
+
+# Create a UMAP plot with custom colors based on cell type
+DimPlot(seurat_object, group.by = "cell_type", label = TRUE, repel = TRUE, cols = cell_type_colors) +
+    theme(legend.text = element_text(size = 12)) +
+    ggtitle("UMAP with Custom Cell Type Colors")
+
+# Generate a t-SNE plot with cluster labels
+TSNEPlot(seurat_object, group.by = "cell_type", label = TRUE) +
+    theme(legend.text = element_text(size = 12)) +
+    ggtitle("t-SNE Plot of Cell Types")
+
+
+# Define specific colors for each cell type
+cell_type_colors <- c(
+    "Mature oligodendrocytes" = "blue",
+    "Neurons (excitatory or sensory)" = "red",
+    "Uncharacterised (rare or novel cells)" = "gray",
+    "Fibroblast-like cells or specialised astrocytes" = "green",
+    "Reactive astrocytes" = "purple",
+    "GABAergic inhibitory neurons" = "yellow",
+    "Sensory neurons (chemosensory)" = "orange",
+    "Cycling cells (progenitors)" = "brown",
+    "Erythroid cells (red blood cells)" = "pink",
+    "Vascular-associated cells" = "cyan",
+    "Senescent or stress-responsive cells" = "darkred",
+    "Immune cells (microglia or macrophages)" = "#008080"  # Hex code for teal
+
+
+# Save the Seurat object for later use
+saveRDS(seurat_object, file = "../output/seurat_object_analysis.rds")
+
+# Find all markers of cluster 2
+cluster2.markers <- FindMarkers(seurat_object, ident.1 = 2)
+head(cluster2.markers, n = 4)
+
+# Find all markers for all clusters
+all_markers <- FindAllMarkers(seurat_object, only.pos = TRUE)
+
+# View the top markers for all clusters
+head(all_markers, n = 10)
+
+# Identify unique cluster IDs
+cluster_ids <- unique(Idents(seurat_object))
+
+# Initialize an empty list to store marker genes
+marker_genes <- list()
+
+# Find top 4 marker genes for each cluster
+for (i in cluster_ids) {
+    # Identify marker genes for the current cluster
+    cluster_markers <- FindMarkers(seurat_object, ident.1 = i)
+    
+    # Select the top 4 genes based on log fold change
+    top_genes <- cluster_markers %>%
+        arrange(desc(avg_log2FC)) %>%
+        head(4)
+    
+    # Store the result in the list
+    marker_genes[[as.character(i)]] <- top_genes
+}
+
+# Print the marker genes for each cluster
+marker_genes
+
+# Violin plots for cell type marker genes
+
+# 1. Violin plot for astrocyte markers (all genes included)
+VlnPlot(seurat_object, features = c("Aqp4", "Sox9", "Slc1a3", "Slc1a2", "Gfap", "Kcnj10", "Gjb6", "Gjb3", "Hes5"), group.by = "seurat_clusters")
+
+# 2. Violin plot for general neuronal markers (all genes included)
+VlnPlot(seurat_object, features = c("Snap25", "Tubb3", "Rbfox3", "Syn1"), group.by = "seurat_clusters")
+
+# 3. Violin plot for glutamatergic neurons (all genes included)
+VlnPlot(seurat_object, features = c("Slc17a7", "Phox2b", "Gpr4", "TAC1"), group.by = "seurat_clusters")
+
+# 4. Violin plot for GABAergic and glycinergic neurons (all genes included)
+VlnPlot(seurat_object, features = c("Slc32a1", "Slc6a5", "Gad1", "Gad2", "Nos1"), group.by = "seurat_clusters")
+
+# 5. Violin plot for cholinergic neurons (all genes included)
+VlnPlot(seurat_object, features = c("Chat", "Penk", "Nppb"), group.by = "seurat_clusters")
+
+# 6. Violin plot for oligodendrocyte lineage markers (all genes included)
+VlnPlot(seurat_object, features = c("Olig2", "Cspg4", "Pdgfra", "Mog", "Mbp"), group.by = "seurat_clusters")
+
+# 7. Violin plot for microglia markers (all genes included)
+VlnPlot(seurat_object, features = c("Csf1r", "Tmem119", "Hexb"), group.by = "seurat_clusters")
+
+# 8. Violin plot for vascular cell markers (all genes included)
+VlnPlot(seurat_object, features = c("Pecam1", "Cdh5", "Acta2", "Vtn", "Slc2a1"), group.by = "seurat_clusters")
+
+# 9. Violin plot for ependymal and radial glia markers (all genes included)
+VlnPlot(seurat_object, features = c("Foxj1", "Rfx4", "Ttr", "Sox2"), group.by = "seurat_clusters")
+
